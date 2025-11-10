@@ -359,7 +359,34 @@ class Database:
             cursor = await db.execute("SELECT * FROM tokens ORDER BY created_at DESC")
             rows = await cursor.fetchall()
             return [Token(**dict(row)) for row in rows]
-    
+
+    async def get_tokens_with_available_invites(self, limit: int = 10) -> List[Token]:
+        """
+        Get tokens that have available Sora2 invite codes.
+        Conditions:
+          - is_active = 1
+          - sora2_supported = 1
+          - sora2_invite_code not null/empty
+          - sora2_remaining_count > 0
+          - (optional) sora2_cooldown_until is null or passed
+        Ordered by remaining_count desc and last_used_at (oldest first).
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT * FROM tokens
+                 WHERE is_active = 1
+                   AND sora2_supported = 1
+                   AND sora2_invite_code IS NOT NULL
+                   AND sora2_invite_code != ''
+                   AND sora2_remaining_count > 0
+                   AND (sora2_cooldown_until IS NULL OR sora2_cooldown_until <= CURRENT_TIMESTAMP)
+                 ORDER BY sora2_remaining_count DESC, last_used_at ASC NULLS FIRST
+                 LIMIT ?
+            """, (limit,))
+            rows = await cursor.fetchall()
+            return [Token(**dict(row)) for row in rows]
+
     async def update_token_usage(self, token_id: int):
         """Update token usage"""
         async with aiosqlite.connect(self.db_path) as db:

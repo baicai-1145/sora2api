@@ -41,6 +41,7 @@
                 <button onclick="switchTab('tokens')" id="tabTokens" class="tab-btn border-b-2 border-primary text-sm font-medium py-3 px-1">Token 管理</button>
                 <button onclick="switchTab('settings')" id="tabSettings" class="tab-btn border-b-2 border-transparent text-sm font-medium py-3 px-1">系统配置</button>
                 <button onclick="switchTab('logs')" id="tabLogs" class="tab-btn border-b-2 border-transparent text-sm font-medium py-3 px-1">请求日志</button>
+                <button onclick="switchTab('auto')" id="tabAuto" class="tab-btn border-b-2 border-transparent text-sm font-medium py-3 px-1">自动注册</button>
             </nav>
         </div>
 
@@ -126,6 +127,61 @@
                             <!-- 动态填充 -->
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 自动注册面板 -->
+        <div id="panelAuto" class="hidden">
+            <div class="grid gap-6 lg:grid-cols-2">
+                <!-- 开始注册 -->
+                <div class="rounded-lg border border-border bg-background p-6">
+                    <h3 class="text-lg font-semibold mb-4">开始注册</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="text-sm font-medium mb-2 block">邮箱</label>
+                            <input id="autoEmail" type="email" class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" placeholder="your@email.com">
+                        </div>
+                        <div>
+                            <label class="text-sm font-medium mb-2 block">密码（可选）</label>
+                            <input id="autoPassword" type="text" class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" placeholder="留空则随机生成">
+                        </div>
+                        <div class="grid gap-4 md:grid-cols-2">
+                            <div>
+                                <label class="text-sm font-medium mb-2 block">姓名（可选）</label>
+                                <input id="autoName" type="text" class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" placeholder="留空则自动生成">
+                            </div>
+                            <div>
+                                <label class="text-sm font-medium mb-2 block">生日（可选）</label>
+                                <input id="autoBirthday" type="text" class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" placeholder="YYYY-MM-DD，默认1996-01-01">
+                            </div>
+                        </div>
+                        <label class="inline-flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="autoUseProxy" class="h-4 w-4 rounded border-input">
+                            <span class="text-sm font-medium">使用代理出口（建议地区一致）</span>
+                        </label>
+                        <button onclick="autoRegisterStart()" class="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4 w-full">开始注册</button>
+                        <div class="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+                            <div>registration_id：<code id="autoRegId" class="bg-background px-1 py-0.5 rounded">-</code></div>
+                            <div>邀请码来源 TokenID：<code id="autoInviteSource" class="bg-background px-1 py-0.5 rounded">-</code></div>
+                        </div>
+                    </div>
+                </div>
+                <!-- 提交验证码并完成 -->
+                <div class="rounded-lg border border-border bg-background p-6">
+                    <h3 class="text-lg font-semibold mb-4">提交验证码并完成</h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="text-sm font-medium mb-2 block">邮箱验证码</label>
+                            <input id="autoCode" type="text" class="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" placeholder="6位验证码">
+                        </div>
+                        <button onclick="autoRegisterVerify()" class="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4 w-full">提交验证码</button>
+                        <div class="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+                            <div>新 TokenID：<code id="autoNewTokenId" class="bg-background px-1 py-0.5 rounded">-</code></div>
+                            <div>Access Token：<code id="autoAccessToken" class="bg-background px-1 py-0.5 rounded break-all">-</code></div>
+                            <div>状态信息：<span id="autoStatus">-</span></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -623,7 +679,60 @@
         refreshLogs=async()=>{await loadLogs()},
         showToast=(m,t='info')=>{const d=document.createElement('div'),bc={success:'bg-green-600',error:'bg-destructive',info:'bg-primary'};d.className=`fixed bottom-4 right-4 ${bc[t]||bc.info} text-white px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium z-50 animate-slide-up`;d.textContent=m;document.body.appendChild(d);setTimeout(()=>{d.style.opacity='0';d.style.transition='opacity .3s';setTimeout(()=>d.parentNode&&document.body.removeChild(d),300)},2000)},
         logout=()=>{if(!confirm('确定要退出登录吗?'))return;localStorage.removeItem('adminToken');location.href='/login'},
-        switchTab=t=>{const cap=n=>n.charAt(0).toUpperCase()+n.slice(1);['tokens','settings','logs'].forEach(n=>{const active=n===t;$(`panel${cap(n)}`).classList.toggle('hidden',!active);$(`tab${cap(n)}`).classList.toggle('border-primary',active);$(`tab${cap(n)}`).classList.toggle('text-primary',active);$(`tab${cap(n)}`).classList.toggle('border-transparent',!active);$(`tab${cap(n)}`).classList.toggle('text-muted-foreground',!active)});if(t==='settings'){loadAdminConfig();loadProxyConfig();loadWatermarkFreeConfig();loadCacheConfig();loadGenerationTimeout();loadVideoLengthConfig();loadATAutoRefreshConfig()}else if(t==='logs'){loadLogs()}};
+        switchTab=t=>{const cap=n=>n.charAt(0).toUpperCase()+n.slice(1);['tokens','settings','logs','auto'].forEach(n=>{const active=n===t;$(`panel${cap(n)}`).classList.toggle('hidden',!active);$(`tab${cap(n)}`).classList.toggle('border-primary',active);$(`tab${cap(n)}`).classList.toggle('text-primary',active);$(`tab${cap(n)}`).classList.toggle('border-transparent',!active);$(`tab${cap(n)}`).classList.toggle('text-muted-foreground',!active)});if(t==='settings'){loadAdminConfig();loadProxyConfig();loadWatermarkFreeConfig();loadCacheConfig();loadGenerationTimeout();loadVideoLengthConfig();loadATAutoRefreshConfig()}else if(t==='logs'){loadLogs()}};
+
+        // ---- 自动注册 前端动作 ----
+        let autoRegId=null;
+        async function autoRegisterStart(){
+            const email=$('autoEmail').value.trim();
+            if(!email){showToast('请输入邮箱','error');return;}
+            const body={
+                email,
+                password: $('autoPassword').value.trim() || undefined,
+                name: $('autoName').value.trim() || undefined,
+                birthday: $('autoBirthday').value.trim() || undefined,
+                use_proxy: $('autoUseProxy').checked
+            };
+            try{
+                const r=await apiRequest('/api/auto_register/start',{method:'POST',body:JSON.stringify(body)});
+                if(!r) return;
+                const d=await r.json();
+                if(r.ok){
+                    autoRegId=d.registration_id;
+                    $('autoRegId').textContent=d.registration_id;
+                    $('autoInviteSource').textContent=d.invite_source_token_id ?? '-';
+                    showToast('已创建注册会话，等待验证码','success');
+                }else{
+                    showToast(d.detail||'创建注册会话失败','error');
+                }
+            }catch(e){
+                showToast('创建注册会话失败: '+e.message,'error');
+            }
+        }
+
+        async function autoRegisterVerify(){
+            if(!autoRegId){showToast('请先开始注册获取 registration_id','error');return;}
+            const code=$('autoCode').value.trim();
+            if(!code){showToast('请输入验证码','error');return;}
+            try{
+                const r=await apiRequest('/api/auto_register/verify',{method:'POST',body:JSON.stringify({registration_id:autoRegId,code})});
+                if(!r) return;
+                const d=await r.json();
+                if(d.success){
+                    $('autoNewTokenId').textContent=d.token_id ?? '-';
+                    $('autoAccessToken').textContent=d.access_token ?? '-';
+                    $('autoStatus').textContent=d.message || '成功';
+                    showToast('注册完成，Token 已入库','success');
+                    refreshTokens();
+                }else{
+                    $('autoStatus').textContent=d.message || '失败';
+                    showToast(d.message || '注册失败','error');
+                }
+            }catch(e){
+                showToast('注册失败: '+e.message,'error');
+            }
+        }
+
         window.addEventListener('DOMContentLoaded',()=>{checkAuth();refreshTokens();loadATAutoRefreshConfig()});
     </script>
 </body>

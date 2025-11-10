@@ -12,6 +12,7 @@ from ..services.token_manager import TokenManager
 from ..services.proxy_manager import ProxyManager
 from ..core.database import Database
 from ..core.models import Token, AdminConfig, ProxyConfig
+from ..services.registration_manager import RegistrationManager
 
 router = APIRouter()
 
@@ -20,17 +21,19 @@ token_manager: TokenManager = None
 proxy_manager: ProxyManager = None
 db: Database = None
 generation_handler = None
+registration_manager: RegistrationManager = None
 
 # Store active admin tokens (in production, use Redis or database)
 active_admin_tokens = set()
 
 def set_dependencies(tm: TokenManager, pm: ProxyManager, database: Database, gh=None):
     """Set dependencies"""
-    global token_manager, proxy_manager, db, generation_handler
+    global token_manager, proxy_manager, db, generation_handler, registration_manager
     token_manager = tm
     proxy_manager = pm
     db = database
     generation_handler = gh
+    registration_manager = RegistrationManager(db, proxy_manager)
 
 def verify_admin_token(authorization: str = Header(None)):
     """Verify admin token from Authorization header"""
@@ -119,6 +122,33 @@ class UpdateWatermarkFreeConfigRequest(BaseModel):
 class UpdateVideoLengthConfigRequest(BaseModel):
     default_length: str  # "10s" or "15s"
 
+# ---------- Auto Registration DTOs ----------
+class AutoRegisterStartRequest(BaseModel):
+    email: str
+    password: Optional[str] = None
+    name: Optional[str] = None
+    birthday: Optional[str] = None  # YYYY-MM-DD
+    use_proxy: Optional[bool] = False
+
+class AutoRegisterStartResponse(BaseModel):
+    registration_id: str
+    status: str = "pending_code"
+    email: str
+    name: str
+    birthday: str
+    invite_source_token_id: Optional[int] = None
+
+class AutoRegisterVerifyRequest(BaseModel):
+    registration_id: str
+    code: str
+
+class AutoRegisterVerifyResponse(BaseModel):
+    success: bool
+    token_id: Optional[int] = None
+    access_token: Optional[str] = None
+    email: Optional[str] = None
+    invite_source_token_id: Optional[int] = None
+    message: Optional[str] = None
 # Auth endpoints
 @router.post("/api/login", response_model=LoginResponse)
 async def login(request: LoginRequest):
@@ -232,6 +262,94 @@ async def rt_to_at(request: RT2ATRequest, token: str = Depends(verify_admin_toke
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/api/auto_register/start", response_model=AutoRegisterStartResponse)
+async def auto_register_start(request: AutoRegisterStartRequest, token: str = Depends(verify_admin_token)):
+    """
+    Start registration flow: generate registration_id, pick an invite source,
+    persist minimal context; wait for user to provide email verification code.
+    """
+    try:
+        ctx = await registration_manager.start(
+            email=request.email,
+            password=request.password,
+            name=request.name,
+            birthday=request.birthday,
+            use_proxy=request.use_proxy or False
+        )
+        if ctx.source_invite_token_id is None:
+            # No available invites
+            raise HTTPException(status_code=424, detail="No available Sora2 invites")
+        return AutoRegisterStartResponse(
+            registration_id=ctx.registration_id,
+            email=ctx.email,
+            name=ctx.name,
+            birthday=ctx.birthday,
+            invite_source_token_id=ctx.source_invite_token_id
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start registration: {str(e)}")
+
+@router.post("/api/auto_register/verify", response_model=AutoRegisterVerifyResponse)
+async def auto_register_verify(request: AutoRegisterVerifyRequest, token: str = Depends(verify_admin_token)):
+    """
+    Verify email code and continue flow (placeholder).
+    For now returns 501-like message; will be implemented after wiring HTTP steps from HAR.
+    """
+    try:
+        result = await registration_manager.verify(request.registration_id, request.code)
+        if not result.get("implemented"):
+            msg = result.get("detail") or f"Stage {result.get('stage')} failed with status {result.get('status')}"
+            if result.get("captcha_required"):
+                msg += " (captcha_required: please complete manual verification)"
+            return AutoRegisterVerifyResponse(
+                success=False,
+                message=msg,
+                invite_source_token_id=result.get("source_invite_token_id")
+            )
+
+        access_token = result.get("access_token")
+        email = result.get("email")
+        source_invite_token_id = result.get("source_invite_token_id")
+
+        # 1) Add token to DB (auto enrich + username set handled inside)
+        new_token = await token_manager.add_token(
+            token_value=access_token,
+            remark="auto_register",
+            update_if_exists=False
+        )
+
+        # 2) Activate Sora2 with source invite code if available
+        if source_invite_token_id:
+            source_token = await db.get_token(source_invite_token_id)
+            if source_token and source_token.sora2_invite_code:
+                try:
+                    _ = await token_manager.activate_sora2_invite(access_token, source_token.sora2_invite_code)
+                except Exception as e:
+                    # Soft fail: token已入库，邀请失败仅提示
+                    return AutoRegisterVerifyResponse(
+                        success=True,
+                        token_id=new_token.id,
+                        access_token=access_token,
+                        email=email,
+                        invite_source_token_id=source_invite_token_id,
+                        message=f"Registered, but invite activation failed: {e}"
+                    )
+
+        return AutoRegisterVerifyResponse(
+            success=True,
+            token_id=new_token.id,
+            access_token=access_token,
+            email=email,
+            invite_source_token_id=source_invite_token_id,
+            message="Registered and token added"
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to verify registration: {str(e)}")
 
 @router.put("/api/tokens/{token_id}/status")
 async def update_token_status(
